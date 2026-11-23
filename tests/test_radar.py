@@ -172,24 +172,37 @@ class TrustStrategy(unittest.TestCase):
     def test_simulate_modes_and_costs(self):
         from radar import ts
         costs = Costs(CFG)
+        cfg = json.loads(json.dumps(CFG))
+        cfg['ts'].update({'tp_pct': 1.5, 'sl_pct': 5.0})
         up = [("d1", 100, 102, 99.5, 101, 0), ("d2", 101, 102, 100, 101, 0)]
-        r = ts.simulate(100, up, CFG, costs, "same_close")           # 當日 +1.5% 達標
+        r = ts.simulate(100, up, cfg, costs, "same_close")           # 當日 +1.5% 達標
         self.assertEqual(r["status"], "tp")
         self.assertAlmostEqual(r["gross_pct"], 1.5, places=6)
         self.assertLess(r["net_pct"], 1.0)                           # 扣掉手續費與證交稅後只剩約 0.9%
         self.assertAlmostEqual(r["net_pct"], 1.5 - 0.1425 * 2 - 0.3 - 0.0, delta=0.05)
-        r = ts.simulate(100, up, CFG, costs, "next_open")            # 隔日開盤 100 進場,最高 102 達標
+        r = ts.simulate(100, up, cfg, costs, "next_open")            # 隔日開盤 100 進場,最高 102 達標
         self.assertEqual((r["status"], r["fill"]), ("tp", 100))
         both = [("d1", 100, 102, 94, 100, 0)]
-        self.assertEqual(ts.simulate(100, both, CFG, costs, "next_open")["status"], "stop")   # 同日兩邊都碰到,以停損計
+        self.assertEqual(ts.simulate(100, both, cfg, costs, "next_open")["status"], "stop")   # 同日兩邊都碰到,以停損計
         gap = [("d1", 100, 100.5, 99.8, 100, 0), ("d2", 90, 91, 89, 90, 0)]
-        r = ts.simulate(100, gap, CFG, costs, "same_close")
+        r = ts.simulate(100, gap, cfg, costs, "same_close")
         self.assertEqual((r["status"], r["exit"]), ("stop", 90))     # 跳空越過停損,以開盤價出場
         flat = [("d%d" % i, 100, 100.8, 99.5, 100.2, 0) for i in range(5)]
-        r = ts.simulate(100, flat, CFG, costs, "same_close")
+        r = ts.simulate(100, flat, cfg, costs, "same_close")
         self.assertEqual((r["status"], r["exit_date"]), ("time", "d4"))   # 第 5 日收盤出場
-        self.assertEqual(ts.simulate(100, flat[:3], CFG, costs, "same_close")["status"], "open")
-        self.assertEqual(ts.simulate(100, [], CFG, costs, "same_close")["status"], "pending")
+        self.assertEqual(ts.simulate(100, flat[:3], cfg, costs, "same_close")["status"], "open")
+        self.assertEqual(ts.simulate(100, [], cfg, costs, "same_close")["status"], "pending")
+
+    def test_override_and_sweep(self):
+        from radar import ts
+        costs = Costs(CFG)
+        bars = [("d1", 100, 103.5, 99, 101, 0)]
+        self.assertEqual(ts.simulate(100, bars, CFG, costs, "next_open", 3.0, 3.0)["status"], "tp")
+        self.assertEqual(ts.simulate(100, bars, CFG, costs, "next_open", 4.0, 3.0)["status"], "open")
+        bars2 = [("d1", 100, 103.5, 96.5, 101, 0)]   # 同日兩邊都碰到,算停損
+        self.assertEqual(ts.simulate(100, bars2, CFG, costs, "next_open", 3.0, 3.0)["status"], "stop")
+        self.assertEqual(CFG["ts"]["tp_pct"], 3.0)
+        self.assertIn([3.0, 3.0], CFG["ts"]["sweep"])
 
     def test_parse_trust(self):
         from radar import twse
@@ -214,6 +227,7 @@ class TrustStrategy(unittest.TestCase):
         cfg["ts"]["min_lots"] = 100
         res = ts.backtest(conn, U, trust, [], cfg, [d.isoformat() for d in days])
         json.dumps(res)
+        self.assertEqual(len(res["sweep"]), len(cfg["ts"]["sweep"]))
         for m in ts.MODES:
             s = res["modes"][m]
             if s["n"]:

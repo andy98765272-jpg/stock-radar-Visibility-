@@ -78,13 +78,15 @@ def screen_ts(U, trust, disposal, asof, cfg):
     return {"asof": latest, "ready": True, "picks": out[: t["top_n"]], "counts": counts}
 
 
-def simulate(close_t, future, cfg, costs, mode):
+def simulate(close_t, future, cfg, costs, mode, tp_pct=None, sl_pct=None):
     """future:訊號日之後的日線 [(date,o,h,l,c), ...]。回傳成交結果或 pending/open。"""
     t = cfg["ts"]
     if not future:
         return {"status": "pending"}
     fill = close_t if mode == "same_close" else future[0][1]
-    tp, sl, hold = fill * (1 + t["tp_pct"] / 100), fill * (1 - t["sl_pct"] / 100), t["max_hold_days"]
+    tp_pct = t["tp_pct"] if tp_pct is None else tp_pct
+    sl_pct = t["sl_pct"] if sl_pct is None else sl_pct
+    tp, sl, hold = fill * (1 + tp_pct / 100), fill * (1 - sl_pct / 100), t["max_hold_days"]
     status = px = d_exit = None
     for j, b in enumerate(future):
         d, o, h, l, c = b[0], b[1], b[2], b[3], b[4]
@@ -142,6 +144,8 @@ def backtest(conn, U, trust, disposal, cfg, dates):
     costs = Costs(cfg)
     horizon = cfg["ts"]["max_hold_days"] + 1
     trades = {m: [] for m in MODES}
+    sweep_pairs = [tuple(x) for x in cfg["ts"].get("sweep", [])]
+    sweep_trades = {pair: [] for pair in sweep_pairs}
     days = 0
     for d in dates:
         if d not in trust:
@@ -158,6 +162,11 @@ def backtest(conn, U, trust, disposal, cfg, dates):
                 if r["status"] in ("tp", "stop", "time"):
                     r.update({"date": d, "code": p["code"]})
                     trades[m].append(r)
+            for pair in sweep_pairs:  # 同一批訊號、隔日開盤進場,比較不同停利停損組合
+                r = simulate(p["close"], fut, cfg, costs, "next_open", pair[0], pair[1])
+                if r["status"] in ("tp", "stop", "time"):
+                    r.update({"date": d, "code": p["code"]})
+                    sweep_trades[pair].append(r)
     out = {"days": days, "modes": {}}
     for m, label in MODES.items():
         done = trades[m]
@@ -169,4 +178,10 @@ def backtest(conn, U, trust, disposal, cfg, dates):
         s["equity"] = eq
         s["label"] = label
         out["modes"][m] = s
+    out["sweep"] = []
+    for (tp, sl), done in sweep_trades.items():
+        st = stats(done)
+        st.pop("exits", None)
+        st.update({"tp": tp, "sl": sl, "breakeven_win_rate": round(sl / (tp + sl) * 100, 1)})
+        out["sweep"].append(st)
     return out

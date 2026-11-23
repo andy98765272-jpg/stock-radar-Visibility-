@@ -446,7 +446,7 @@ function tsRow(p) {
     <div class="grid">${[['投信買超', nf(p.trust_lots) + ' 張'], ['佔成交量', nf(p.trust_share_pct, 1) + '%'], ['成交量', nf(p.vol_lots) + ' 張'], ['量比(對前一日)', nf(p.vol_ratio, 2) + ' 倍'],
       ['停利參考', `<span class="up">${nf(p.tp_ref, 2)}</span>`], ['停損參考', `<span class="down">${nf(p.sl_ref, 2)}</span>`]]
       .map(x => `<div class="stat"><div class="l">${x[0]}</div><div class="n">${x[1]}</div></div>`).join('')}</div>
-    <p class="muted" style="font-size:.85rem;margin:10px 0 0">停利、停損是用今日收盤價算的參考價。實際以隔日開盤價進場後,停利 +1.5%、停損 −5%,最多持有 5 個交易日,第 5 日收盤出場。</p>
+    <p class="muted" style="font-size:.85rem;margin:10px 0 0">停利、停損是用今日收盤價算的參考價。實際以隔日開盤價進場後再依比例計算,最多持有 5 個交易日,第 5 日收盤出場。</p>
   </div></div></details>`;
 }
 const SHORT = {same_close: '當日收盤進場<br>(XQ 做法,做不到)', next_open: '隔日開盤進場<br>(做得到)'};
@@ -466,6 +466,15 @@ function tsMetricRows(M) {
     ['最大回撤', m => `<span class="down">−${f(m.max_drawdown_pct, 1, '%')}</span>`],
     ['停利 / 停損 / 時間出場', m => m.exits ? `${m.exits.tp} / ${m.exits.stop} / ${m.exits.time}` : '—'],
   ];
+}
+
+function tsSweep(B) {
+  if (!B.sweep || !B.sweep.length) return '';
+  const best = Math.max(...B.sweep.map(x => x.avg_net_pct == null ? -99 : x.avg_net_pct));
+  const rows = B.sweep.map(x => `<tr><td class="num">+${x.tp}% / −${x.sl}%</td><td class="r num">${nf(x.n)}</td><td class="r num">${nf(x.win_rate_net, 1)}%</td><td class="r num">${nf(x.breakeven_win_rate, 1)}%</td><td class="r num ${cls(x.avg_net_pct)}">${sgn(x.avg_net_pct, 3)}%</td><td class="r num ${cls(x.total_net_pct)}">${sgn(x.total_net_pct, 0)}%</td><td class="r num">${x.profit_factor == null ? '—' : nf(x.profit_factor, 2)}</td></tr>`).join('');
+  return `<div class="panel"><h3 style="margin-bottom:4px">不同停利 / 停損比較(隔日開盤進場、扣成本)</h3>
+    <p class="muted" style="font-size:.85rem;margin:0 0 10px">同一批訊號,只換停利停損。「打平勝率」是不計成本、要賺回本金至少要有的勝率;實際勝率低於它,就是虧的。</p>
+    <div class="scroll"><table class="wrap"><tr><th>停利 / 停損</th><th class="r">筆數</th><th class="r">勝率</th><th class="r">打平勝率</th><th class="r">每筆平均</th><th class="r">累計</th><th class="r">獲利因子</th></tr>${rows}</table></div></div>`;
 }
 function renderTs() {
   const el = $('ts');
@@ -493,11 +502,11 @@ function renderTs() {
   }
   el.innerHTML = `<div class="panel"><h3 style="margin-bottom:6px">投信隔日沖 · ${esc(T.asof || '')}</h3>
     <p class="muted" style="font-size:.85rem;margin:0">${cond}。出場:停利 +${P.tp_pct}%、停損 −${P.sl_pct}%、最多持有 ${P.max_hold_days} 個交易日。</p></div>
-    ${funnel}<div class="stack">${list}</div>${bt}
+    ${funnel}<div class="stack">${list}</div>${bt}${hasBt ? tsSweep(B) : ''}
     <div class="panel"><h3 style="margin-bottom:8px">看這個策略前,先知道這幾件事</h3>
       <ul style="margin:0;padding-left:1.2em;line-height:1.7;font-size:.9rem">
-        <li><b>高勝率來自出場設定</b>:停利只要 +1.5%、停損卻放 −5%,賺一次只有 1.5%,賠一次是 5%,要贏 77% 以上才打平(還沒算成本)。所以勝率高不等於賺錢,要看「每筆平均報酬」。</li>
-        <li><b>成本很吃</b>:買賣手續費加證交稅約 0.585%,對 +1.5% 的目標來說吃掉將近 4 成。</li>
+        <li><b>勝率高不等於賺錢</b>:停利停損不對稱時,勝率會很漂亮,但賺一次的金額遠小於賠一次。要看「每筆平均報酬」,以及下面不同停利停損組合的比較。</li>
+        <li><b>成本很吃</b>:買賣手續費加證交稅約 0.585%,停利目標越小,被吃掉的比例越大。</li>
         <li><b>投信資料收盤後才公布</b>:不可能在收盤前知道今天投信有沒有買,所以「當日收盤進場」實務上做不到,只是對照用。能做的是收盤後選股、隔天開盤進場,看右邊那欄。</li>
         <li><b>條件與 XQ 不完全相同</b>:XQ 是「投信持股比例增加」,這裡只拿得到「投信買賣超股數」,所以用買超代替,排序用買超佔成交量比重。另外排除處置股。</li>
         <li><b>回測假設</b>:日線無法知道盤中先後,同一天同時碰到停利與停損一律算停損;跳空越過價位以開盤價成交。真實會有滑價與買不到的情況。</li>
