@@ -1,0 +1,49 @@
+name: intraday
+
+# 台北時間週一到週五 08:50 啟動,一直跑到 13:35。
+# 每隔約 20 秒向證交所抓一次候選股報價,把結果推到獨立的 live 分支(不會觸發網站重新部署)。
+on:
+  schedule:
+    - cron: "50 0 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: intraday
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      INTERVAL: "20"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 盤中輪詢
+        run: |
+          push_live() {
+            rm -rf /tmp/live && mkdir /tmp/live
+            cp docs/data/intraday.json /tmp/live/intraday.json
+            (cd /tmp/live && git init -q -b live \
+              && git config user.name "stock-radar-bot" && git config user.email "stock-radar-bot@users.noreply.github.com" \
+              && git add intraday.json && git commit -q -m "intraday $(date -u +%T)" \
+              && git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" live) \
+              || echo "推送失敗,下一輪再試"
+          }
+          # 手動測試時(不在盤中時間)也至少抓一次,方便確認證交所從 GitHub 主機連不連得到
+          python -m radar watch --once || echo "::warning::第一次抓報價失敗,請看上方錯誤訊息"
+          [ -f docs/data/intraday.json ] && push_live
+          while [ "$(TZ=Asia/Taipei date +%H%M)" -lt 1335 ] && [ "$(TZ=Asia/Taipei date +%H%M)" -ge 0850 ]; do
+            python -m radar watch --once || true
+            [ -f docs/data/intraday.json ] && push_live
+            sleep "$INTERVAL"
+          done

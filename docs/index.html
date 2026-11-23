@@ -404,8 +404,8 @@ function renderIntraday() {
     el.innerHTML = `<div class="panel">
       <h3>盤中監控</h3>
       <p class="muted" style="margin-top:8px">盤中不掃全市場,只盯盤後選出的候選名單:每隔幾十秒抓一次報價,計算盤中量比、跳空幅度,並判斷是否觸及進場價或跌破停損。</p>
-      <p style="margin-top:10px">在你的電腦執行 <code class="num">python -m radar watch</code>,再用 <code class="num">python -m http.server -d docs</code> 開啟本頁,這裡就會顯示即時狀態。</p>
-      <p class="muted" style="margin-top:8px;font-size:.85rem">盤中資料更新頻率高,不適合放在雲端排程裡,所以這個功能在本機執行。</p></div>`;
+      <p style="margin-top:10px">開盤時間(週一到週五 09:00 到 13:30)會由 GitHub 自動抓報價,不用開電腦,大約每 30 秒更新一次。這裡目前沒有資料,可能是還沒開盤、今天休市,或是自動程式還沒啟動。</p>
+      <p class="muted" style="margin-top:8px;font-size:.85rem">想要每 5 秒更新,可以在自己的電腦執行 <code class="num">python -m radar watch</code>,再用 <code class="num">python -m http.server -d docs</code> 開啟本頁。</p></div>`;
     return;
   }
   const rows = INTRA.items.map(x => {
@@ -417,17 +417,21 @@ function renderIntraday() {
   }).join('');
   el.innerHTML = `<div class="panel"><div class="sec-t" style="margin-top:0">更新時間 ${esc(INTRA.updated_at)} <span id="intra-age" class="muted"></span></div>
     <div class="scroll"><table><tr><th>標的</th><th>策略</th><th class="r">現價</th><th class="r">漲跌</th><th class="r">盤中量比</th><th class="r">進場價</th><th class="r">停損</th><th>狀態</th></tr>${rows}</table></div>
-    <p class="muted" style="margin-top:10px;font-size:.82rem">本頁每 5 秒檢查一次有沒有新資料;資料多久更新,取決於監控程式向證交所抓報價的間隔(預設 5 秒)。盤中量比 = 目前累計成交量 ÷(前 5 日平均成交量 × 此時段預期累計比例)。預期比例是依一般 U 型量能曲線估計,僅供參考。</p></div>`;
+    <p class="muted" style="margin-top:10px;font-size:.82rem">本頁每 5 秒檢查一次有沒有新資料。GitHub 自動輪詢約每 30 秒更新一次;本機執行 watch 則預設每 5 秒。盤中量比 = 目前累計成交量 ÷(前 5 日平均成交量 × 此時段預期累計比例)。預期比例是依一般 U 型量能曲線估計,僅供參考。</p></div>`;
 }
 
 function intraAge() {
   const el = $('intra-age'); if (!el || !INTRA) return;
   const s = Math.max(0, Math.round((Date.now() - new Date(INTRA.updated_at.replace(' ', 'T') + '+08:00').getTime()) / 1000));
-  el.textContent = s > 90 ? `(已 ${Math.floor(s / 60)} 分鐘沒有更新,監控程式可能已停止或已收盤)` : `(${s} 秒前)`;
+  el.textContent = s > 150 ? `(已 ${Math.floor(s / 60)} 分鐘沒有更新,監控程式可能已停止或已收盤)` : `(${s} 秒前)`;
 }
+// 盤中資料有兩個來源:GitHub 自動輪詢推到 live 分支(不用開電腦),或本機執行 watch 寫出的檔案。取比較新的那份。
+const LIVE_URL = 'https://raw.githubusercontent.com/andy98765272-jpg/stock-radar-visibility-/live/intraday.json';
 async function pollIntraday() {
   if (document.hidden || location.hash.replace('#', '') !== 'intraday') return;
-  const j = await getJSON('data/intraday.json?t=' + Date.now());
+  const t = Date.now();
+  const [a, b] = await Promise.all([getJSON('data/intraday.json?t=' + t), getJSON(LIVE_URL + '?t=' + t)]);
+  const j = [a, b].filter(Boolean).sort((x, y) => String(y.updated_at).localeCompare(String(x.updated_at)))[0];
   if (j && (!INTRA || j.updated_at !== INTRA.updated_at)) { INTRA = j; renderIntraday(); }
   intraAge();
 }
