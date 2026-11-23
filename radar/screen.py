@@ -301,12 +301,21 @@ def screen(U, inst, disposal, asof, cfg, include_all_scores=False):
             disposed.add(code)
 
     counts = {"scanned": len(feats), "eligible": 0, "matched": {"bk": 0, "pb": 0, "mo": 0},
-              "dropped_rr": 0, "below_min_score": 0, "qualified": 0}
+              "dropped_rr": 0, "below_min_score": 0, "qualified": 0, "watch": 0}
     cands = []
+    watch = []
+    watch_min = cfg["score"].get("watch_min", 60)
     for code, f in feats.items():
-        if base_exclusions(f, code, cfg, code in disposed):
-            continue
-        counts["eligible"] += 1
+        why = base_exclusions(f, code, cfg, code in disposed)
+        watch_only = False
+        if why:
+            # 只差在均線沒有完整多頭排列(MA5 > MA20 且站上 MA20)的,可以進觀察名單
+            if why == ["均線未多頭排列"] and f["ma5"] > f["ma20"] and f["close"] > f["ma20"]:
+                watch_only = True
+            else:
+                continue
+        else:
+            counts["eligible"] += 1
         matches = match_strategies(f, ctx, cfg)
         if not matches:
             continue
@@ -322,10 +331,20 @@ def screen(U, inst, disposal, asof, cfg, include_all_scores=False):
             nets = [inst.get(d, {}).get(code) for d in last3]
             chips = (inst_today[code], sum(x for x in nets if x is not None))
         rows, by_group, total, flags = score_stock(f, plan, chips, ctx, cfg)
-        if total < cfg["score"]["min_score"] and not include_all_scores:
+        reason = None
+        if watch_only:
+            if total < watch_min:
+                continue
+            reason = "均線尚未完整多頭排列(MA5 > MA20,但 MA5、MA10、MA20 未依序排列),不算正式訊號。"
+        elif total < cfg["score"]["min_score"] and not include_all_scores:
             counts["below_min_score"] += 1
-            continue
-        counts["qualified"] += 1
+            if total < watch_min:
+                continue
+            reason = f"評分 {total} 分,未達正式名單門檻 {cfg['score']['min_score']} 分,不算正式訊號。"
+        if reason is None:
+            counts["qualified"] += 1
+        else:
+            counts["watch"] += 1
         shares = costs.shares(plan["entry"], plan["stop"], cfg["risk"]["max_risk_per_trade"])
         reasons = [x["label"] for x in rows if x["got"] == x["max"] and x["group"] != "風險控管"][:6]
         pick = {
@@ -358,12 +377,20 @@ def screen(U, inst, disposal, asof, cfg, include_all_scores=False):
             "chips": None if chips is None else {"net_today": chips[0], "net3": chips[1]},
             "_tw": f["turnover20_wan"],
         }
-        cands.append(pick)
+        if reason is None:
+            cands.append(pick)
+        else:
+            pick["watch_reason"] = reason
+            watch.append(pick)
 
     cands.sort(key=lambda p: (-p["score"], -p["_tw"]))
     for p in cands:
         p.pop("_tw", None)
     picks = cands if include_all_scores else cands[: cfg["score"]["max_picks"]]
+    watch.sort(key=lambda p: (-p["score"], -p["_tw"]))
+    for p in watch:
+        p.pop("_tw", None)
+    watchlist = watch[: cfg["score"].get("max_watch", 10)]
     meta = {
         "asof": latest,
         "generated_at": now_taipei().isoformat(timespec="seconds"),
@@ -376,4 +403,4 @@ def screen(U, inst, disposal, asof, cfg, include_all_scores=False):
             "評分僅代表條件符合程度,不等於獲利機率。",
         ],
     }
-    return {"meta": meta, "picks": picks}
+    return {"meta": meta, "picks": picks, "watchlist": watchlist}

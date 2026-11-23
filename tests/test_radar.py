@@ -229,6 +229,19 @@ class Pipeline(unittest.TestCase):
             self.assertTrue(all(x[6] is not None for x in h[-10:]))
             self.assertIn("ret5", p["info"])
 
+    def test_watchlist_is_separate(self):
+        res = self.res
+        self.assertIn("watchlist", res)
+        picks = {p["code"] for p in res["picks"]}
+        for w in res["watchlist"]:
+            self.assertNotIn(w["code"], picks)
+            self.assertTrue(w["watch_reason"])
+            self.assertGreaterEqual(w["score"], CFG["score"]["watch_min"])
+            self.assertEqual(len(w["history"]), 60)
+        for p in res["picks"]:
+            self.assertNotIn("watch_reason", p)
+        self.assertEqual(res["meta"]["counts"]["qualified"], len(res["picks"]))
+
     def test_disposal_excluded(self):
         self.assertNotIn("3004", [p["code"] for p in self.res["picks"]])
 

@@ -158,6 +158,7 @@ svg text{font-family:var(--font-num)}
     <div class="funnel" id="funnel"></div>
     <div class="chips" id="filters" role="group" aria-label="策略篩選"></div>
     <div id="pick-list" class="stack"></div>
+    <div id="watch-list" class="stack"></div>
   </section>
 
   <section id="intraday" class="stack" hidden></section>
@@ -201,6 +202,7 @@ function emptyState(msg) {
 function renderPicks() {
   if (!PICKS) {
     $('funnel').innerHTML = ''; $('filters').innerHTML = '';
+    $('watch-list').innerHTML = '';
     $('pick-list').innerHTML = emptyState('還沒有選股資料。<br>執行 <code>python -m radar daily</code>,或等排程第一次跑完後重新整理。');
     return;
   }
@@ -215,6 +217,12 @@ function renderPicks() {
   const list = PICKS.picks.filter(p => filter === 'all' || p.strategy === filter);
   $('pick-list').innerHTML = list.length ? list.map(pickCard).join('') :
     emptyState('今天沒有符合條件的股票。沒有訊號也是一種訊號,不需要硬找標的。');
+  const wl = (PICKS.watchlist || []).filter(p => filter === 'all' || p.strategy === filter);
+  $('watch-list').innerHTML = wl.length
+    ? `<div class="sec-t" style="margin-top:14px">觀察名單(${wl.length} 檔)</div>
+       <p class="muted" style="font-size:.85rem;margin-top:-4px">還沒達到正式訊號的標的:分數 60~74,或只差在均線沒有完整多頭排列。可以追蹤,但不算正式訊號,也不計入績效統計。</p>`
+      + wl.map(pickCard).join('')
+    : '';
 }
 function kinfoHTML(p, i) {
   const H = p.history, b = H[i], last = H.length - 1;
@@ -319,12 +327,13 @@ function pickCard(p) {
   const orderTxt = p.order_type === 'limit' ? '回測掛單' : '突破觸價';
   const chip = p.chips ? `三大法人當日 ${sgn(p.chips.net_today / 1000)} 張,近 3 日累計 ${sgn(p.chips.net3 / 1000)} 張` : '沒有法人資料';
   return `<details class="pick"><summary>
-    <div class="n"><div class="nm">${esc(p.name)}</div><div class="sub2 num">${esc(p.code)}</div></div>
+    <div class="n"><div class="nm">${esc(p.name)}</div><div class="sub2 num">${esc(p.code)}${p.watch_reason ? ` <span class="badge">觀察</span>` : ""}</div></div>
     <div class="spark">${sparkSVG(p)}</div>
     <div class="px">${nf(p.close, 2)}<small class="${cls(p.change_pct)}">${sgn(p.change_pct, 2)}%</small></div>
   </summary>
   <div class="body">
     <div class="chartbox">
+      ${p.watch_reason ? `<p class="flag">${esc(p.watch_reason)}</p>` : ''}
       <p class="tagline"><b>${p.score}</b> 分 · ${esc(p.grade)} · ${esc(p.strategy_name)} · 量比 <b>${nf(p.vol_ratio, 1)}</b> · RSI <b>${nf(p.rsi, 0)}</b></p>
       <div class="sec-t">今日走向(近 ${(p.history || []).length} 日 K 線,框起來的是今日。滑過或點選 K 棒看當天資料)</div>
       <div class="legend"><span><i class="m5" style="border-color:var(--accent)"></i>MA5</span><span><i style="border-color:var(--warn)"></i>MA10</span><span><i style="border-color:var(--muted)"></i>MA20</span>
