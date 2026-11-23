@@ -57,6 +57,18 @@
   },
   "data": {
     "history_days": 140,
-    "request_pause_sec": 3.5
+    "request_pause_sec": 3.5,
+    "trust_backfill_days": 140
+  },
+  "ts": {
+    "min_lots": 2500,
+    "min_vol_ratio": 1.2,
+    "max_change_pct": 9.5,
+    "high_days": 20,
+    "top_n": 15,
+    "tp_pct": 1.5,
+    "sl_pct": 5.0,
+    "max_hold_days": 5,
+    "exclude_disposed": true
   }
 }

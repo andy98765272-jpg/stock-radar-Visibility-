@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import date, timedelta
 
-from . import db, perf, screen as scr, twse
+from . import db, perf, screen as scr, ts as tsm, twse
 from .util import now_taipei, today_taipei
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -55,17 +55,25 @@ def update(conn, cfg, history_days=None, log=print):
             elif d < today:
                 db.mark_no_data(conn, iso)  # 非交易日(假日),之後不再重試
         d += timedelta(days=1)
-    # 補抓缺少法人資料的最近 5 個交易日(三大法人資料通常比行情晚發布)
-    for iso in db.price_dates(conn)[-5:]:
-        if not db.has_inst(conn, iso):
-            try:
-                m = twse.fetch_inst(date.fromisoformat(iso))
-            except twse.FetchError as e:
-                log(f"  ! {iso} 法人資料抓取失敗:{e}")
-                continue
-            if m:
-                db.upsert_inst(conn, iso, m)
-                log(f"  {iso} 法人 {len(m)} 檔")
+    # 補抓法人與投信資料:最近 5 個交易日一定檢查(資料通常比行情晚發布);
+    # 投信買賣超另外回補到 trust_backfill_days 個交易日,供「投信隔日沖」回測使用
+    dates_all = db.price_dates(conn)
+    back = cfg["data"].get("trust_backfill_days", 140)
+    todo = [iso for i, iso in enumerate(dates_all[-back:])
+            if not db.has_trust(conn, iso) or (iso in dates_all[-5:] and not db.has_inst(conn, iso))]
+    if len(todo) > 10:
+        log(f"  回補 {len(todo)} 個交易日的投信資料(每日約 {cfg['data']['request_pause_sec']:.1f} 秒,請稍候)")
+    for iso in todo:
+        try:
+            m_inst, m_trust = twse.fetch_inst_trust(date.fromisoformat(iso))
+        except twse.FetchError as e:
+            log(f"  ! {iso} 法人資料抓取失敗:{e}")
+            continue
+        if m_inst:
+            db.upsert_inst(conn, iso, m_inst)
+        if m_trust:
+            db.upsert_trust(conn, iso, m_trust)
+            log(f"  {iso} 法人 {len(m_inst)} 檔、投信 {len(m_trust)} 檔")
     try:
         disp = twse.fetch_disposal()
         db.replace_disposal(conn, disp)
@@ -113,6 +121,31 @@ def backtest(conn, cfg, days, log=print):
     log(f"回測 {len(target)} 個交易日,共 {total} 筆訊號")
 
 
+def run_ts(conn, cfg, days):
+    dates = db.price_dates(conn)
+    since = dates[max(0, len(dates) - 140)]
+    U = scr.Universe.load(conn, since)
+    trust = db.load_trust(conn, since)
+    disp = db.load_disposal(conn)
+    today = tsm.screen_ts(U, trust, disp, dates[-1], cfg)
+    bt = tsm.backtest(conn, U, trust, disp, cfg, dates[-days:])
+    return {"generated_at": now_taipei().isoformat(timespec="seconds"), "params": cfg["ts"], "doc": tsm.__doc__.strip(),
+            "today": today, "backtest": bt}
+
+
+def cmd_ts(args):
+    cfg = load_cfg(args.config)
+    conn = db.connect(DB_PATH)
+    res = run_ts(conn, cfg, args.days)
+    write_json("ts.json", res)
+    t = res["today"]
+    print(f"資料日期 {t['asof']},投信隔日沖入選 {len(t['picks'])} 檔(資料就緒:{t['ready']})")
+    for p in t["picks"]:
+        print(f"  {p['rank']:>2}. {p['code']} {p['name']:<8} 收 {p['close']} 量 {p['vol_lots']} 張 投信買 {p['trust_lots']} 張 ({p['trust_share_pct']}%)")
+    for m, s in res["backtest"]["modes"].items():
+        print(f"  [{m}] {s.get('n', 0)} 筆 毛勝率 {s.get('win_rate_gross')} 淨勝率 {s.get('win_rate_net')} 每筆淨 {s.get('avg_net_pct')}%")
+
+
 def cmd_daily(args):
     cfg = load_cfg(args.config)
     conn = db.connect(DB_PATH)
@@ -133,6 +166,8 @@ def cmd_daily(args):
         backtest(conn, cfg, args.backtest_days)
     write_json("stats.json", compute_stats(conn, cfg))
     print("績效統計已更新 → docs/data/stats.json")
+    write_json("ts.json", run_ts(conn, cfg, 140))
+    print("投信隔日沖已更新 → docs/data/ts.json")
 
 
 def cmd_update(args):
@@ -259,6 +294,9 @@ def main(argv=None):
     p = sub.add_parser("backtest", help="重播過去 N 個交易日的選股並統計績效")
     p.add_argument("--days", type=int, default=60)
     p.set_defaults(fn=cmd_backtest)
+    p = sub.add_parser("ts", help="投信隔日沖選股與回測")
+    p.add_argument("--days", type=int, default=140)
+    p.set_defaults(fn=cmd_ts)
     p = sub.add_parser("import", help="匯入瀏覽器抓下來的資料檔(JSON)")
     p.add_argument("file")
     p.set_defaults(fn=cmd_import)

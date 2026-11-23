@@ -97,6 +97,8 @@ table{border-collapse:collapse;width:100%;font-size:.88rem}
 th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--muted);font-weight:500;font-size:.8rem}
 td.r,th.r{text-align:right}
+table.wrap th,table.wrap td{white-space:normal;vertical-align:top}
+table.wrap td:first-child{min-width:7.5em}
 .empty{padding:28px 16px;text-align:center;color:var(--muted)}
 .empty code{font-family:var(--font-num);background:var(--surface2);padding:2px 6px;border-radius:4px}
 .badge{font-size:.72rem;padding:1px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted);margin-left:6px;white-space:nowrap}
@@ -148,6 +150,7 @@ svg text{font-family:var(--font-num)}
   <nav class="tabs" aria-label="主選單">
     <a href="#picks" data-tab="picks">今日名單</a>
     <a href="#intraday" data-tab="intraday">盤中監控</a>
+    <a href="#ts" data-tab="ts">投信隔日沖</a>
     <a href="#perf" data-tab="perf">績效追蹤</a>
     <a href="#params" data-tab="params">參數與說明</a>
   </nav>
@@ -163,6 +166,8 @@ svg text{font-family:var(--font-num)}
 
   <section id="intraday" class="stack" hidden></section>
 
+  <section id="ts" class="stack" hidden></section>
+
   <section id="perf" class="stack" hidden></section>
 
   <section id="params" class="stack" hidden></section>
@@ -177,8 +182,8 @@ const nf = (n, d = 0) => Number(n).toLocaleString('zh-TW', {minimumFractionDigit
 const sgn = (n, d = 0) => (n > 0 ? '+' : n < 0 ? '−' : '') + nf(Math.abs(n), d);
 const cls = n => n > 0 ? 'up' : n < 0 ? 'down' : '';
 const GROUPS = {'技術面':30,'成交量與價量':25,'籌碼面':20,'動能與題材':15,'風險控管':10};
-const TABS = ['picks','intraday','perf','params'];
-let PICKS = null, STATS = null, INTRA = null, filter = 'all', srcKey = 'backtest';
+const TABS = ['picks','intraday','ts','perf','params'];
+let PICKS = null, STATS = null, INTRA = null, TS = null, filter = 'all', srcKey = 'backtest';
 
 async function getJSON(p) {
   try { const r = await fetch(p, {cache: 'no-cache'}); if (!r.ok) throw 0; return await r.json(); }
@@ -428,20 +433,91 @@ async function pollIntraday() {
 }
 setInterval(pollIntraday, 5000);
 
+
+/* ---------- 投信隔日沖 ---------- */
+function tsRow(p) {
+  const q = {history: p.history, change_pct: p.change_pct};
+  return `<details class="pick"><summary>
+    <div class="n"><div class="nm">${esc(p.name)}</div><div class="sub2 num">${esc(p.code)} <span class="badge">第 ${p.rank} 名</span></div></div>
+    <div class="spark">${sparkSVG(q)}</div>
+    <div class="px">${nf(p.close, 2)}<small class="${cls(p.change_pct)}">${sgn(p.change_pct, 2)}%</small></div>
+  </summary>
+  <div class="body"><div class="chartbox">
+    <div class="grid">${[['投信買超', nf(p.trust_lots) + ' 張'], ['佔成交量', nf(p.trust_share_pct, 1) + '%'], ['成交量', nf(p.vol_lots) + ' 張'], ['量比(對前一日)', nf(p.vol_ratio, 2) + ' 倍'],
+      ['停利參考', `<span class="up">${nf(p.tp_ref, 2)}</span>`], ['停損參考', `<span class="down">${nf(p.sl_ref, 2)}</span>`]]
+      .map(x => `<div class="stat"><div class="l">${x[0]}</div><div class="n">${x[1]}</div></div>`).join('')}</div>
+    <p class="muted" style="font-size:.85rem;margin:10px 0 0">停利、停損是用今日收盤價算的參考價。實際以隔日開盤價進場後,停利 +1.5%、停損 −5%,最多持有 5 個交易日,第 5 日收盤出場。</p>
+  </div></div></details>`;
+}
+const SHORT = {same_close: '當日收盤進場<br>(XQ 做法,做不到)', next_open: '隔日開盤進場<br>(做得到)'};
+function tsMetricRows(M) {
+  const f = (v, d = 1, u = '') => v == null ? '—' : nf(v, d) + u;
+  const g = (v, d = 2) => v == null ? '—' : `<span class="${cls(v)}">${sgn(v, d)}%</span>`;
+  return [
+    ['筆數', m => nf(m.n)],
+    ['勝率(未扣成本)', m => f(m.win_rate_gross, 1, '%')],
+    ['勝率(扣手續費與證交稅)', m => f(m.win_rate_net, 1, '%')],
+    ['平均獲利(淨)', m => `<span class="up">${f(m.avg_win_pct, 2, '%')}</span>`],
+    ['平均虧損(淨)', m => `<span class="down">${f(m.avg_loss_pct, 2, '%')}</span>`],
+    ['每筆平均報酬(未扣成本)', m => g(m.avg_gross_pct, 3)],
+    ['每筆平均報酬(扣成本)', m => g(m.avg_net_pct, 3)],
+    ['獲利因子', m => m.profit_factor == null ? '—' : nf(m.profit_factor, 2)],
+    ['累計淨報酬(單利加總)', m => g(m.total_net_pct, 1)],
+    ['最大回撤', m => `<span class="down">−${f(m.max_drawdown_pct, 1, '%')}</span>`],
+    ['停利 / 停損 / 時間出場', m => m.exits ? `${m.exits.tp} / ${m.exits.stop} / ${m.exits.time}` : '—'],
+  ];
+}
+function renderTs() {
+  const el = $('ts');
+  if (!TS) { el.innerHTML = emptyState('還沒有投信隔日沖的資料。<br>下一次每日自動更新(或手動執行 <code>python -m radar ts</code>)跑完後會出現。'); return; }
+  const T = TS.today, B = TS.backtest, P = TS.params;
+  const cond = `成交量 ≥ ${nf(P.min_lots)} 張 · 成交量 > 前一日 ${P.min_vol_ratio} 倍 · 漲幅 < ${P.max_change_pct}% · 最高價創 ${P.high_days} 日新高 · 投信當日買超 · 依投信買超佔成交量比重排序取前 ${P.top_n} 名`;
+  let list;
+  if (!T.ready) list = emptyState(`${esc(T.asof || '')} 的投信買賣超資料還沒有公布(通常收盤後 16:00 以後),稍後重新整理。`);
+  else if (!T.picks.length) list = emptyState('今天沒有股票同時符合全部條件。');
+  else list = T.picks.map(tsRow).join('');
+  const c = T.counts || {};
+  const funnel = T.ready ? `<div class="funnel"><span>掃描 <b>${nf(c.scanned)}</b> 檔</span><span>成交量夠大 <b>${nf(c.liquid)}</b></span><span>量增 <b>${nf(c.vol_up)}</b></span><span>未接近漲停 <b>${nf(c.not_limit_up)}</b></span><span>創 20 日新高 <b>${nf(c.new_high)}</b></span><span>投信買超 <b>${nf(c.trust_buy)}</b></span></div>` : '';
+  const modes = B && B.modes ? Object.keys(B.modes) : [];
+  const hasBt = modes.some(k => B.modes[k].n);
+  let bt = '';
+  if (!hasBt) {
+    bt = `<div class="panel"><h3 style="margin-bottom:8px">歷史回測</h3><p class="muted">投信資料還在回補中,累積到足夠的交易日後會自動出現回測結果。</p></div>`;
+  } else {
+    const rows = tsMetricRows().map(([l, fn]) => `<tr><td>${l}</td>${modes.map(k => `<td class="r num">${fn(B.modes[k])}</td>`).join('')}</tr>`).join('');
+    const eqs = modes.map(k => `<h4 style="margin:12px 0 4px;font-size:.9rem">${esc(B.modes[k].label)}</h4>${equitySVG(B.modes[k].equity, 'v', '%')}`).join('');
+    bt = `<div class="panel"><h3 style="margin-bottom:4px">歷史回測(最近 ${nf(B.days)} 個有投信資料的交易日)</h3>
+      <p class="muted" style="font-size:.85rem;margin:0 0 10px">兩欄用同一批訊號、同樣的停利停損,只差在進場時間。</p>
+      <div class="scroll"><table class="wrap"><tr><th></th>${modes.map(k => `<th class="r">${SHORT[k] || esc(B.modes[k].label)}</th>`).join('')}</tr>${rows}</table></div></div>
+      <div class="panel"><h3 style="margin-bottom:4px">累計淨報酬(%,每筆等權重加總)</h3>${eqs}</div>`;
+  }
+  el.innerHTML = `<div class="panel"><h3 style="margin-bottom:6px">投信隔日沖 · ${esc(T.asof || '')}</h3>
+    <p class="muted" style="font-size:.85rem;margin:0">${cond}。出場:停利 +${P.tp_pct}%、停損 −${P.sl_pct}%、最多持有 ${P.max_hold_days} 個交易日。</p></div>
+    ${funnel}<div class="stack">${list}</div>${bt}
+    <div class="panel"><h3 style="margin-bottom:8px">看這個策略前,先知道這幾件事</h3>
+      <ul style="margin:0;padding-left:1.2em;line-height:1.7;font-size:.9rem">
+        <li><b>高勝率來自出場設定</b>:停利只要 +1.5%、停損卻放 −5%,賺一次只有 1.5%,賠一次是 5%,要贏 77% 以上才打平(還沒算成本)。所以勝率高不等於賺錢,要看「每筆平均報酬」。</li>
+        <li><b>成本很吃</b>:買賣手續費加證交稅約 0.585%,對 +1.5% 的目標來說吃掉將近 4 成。</li>
+        <li><b>投信資料收盤後才公布</b>:不可能在收盤前知道今天投信有沒有買,所以「當日收盤進場」實務上做不到,只是對照用。能做的是收盤後選股、隔天開盤進場,看右邊那欄。</li>
+        <li><b>條件與 XQ 不完全相同</b>:XQ 是「投信持股比例增加」,這裡只拿得到「投信買賣超股數」,所以用買超代替,排序用買超佔成交量比重。另外排除處置股。</li>
+        <li><b>回測假設</b>:日線無法知道盤中先後,同一天同時碰到停利與停損一律算停損;跳空越過價位以開盤價成交。真實會有滑價與買不到的情況。</li>
+      </ul></div>`;
+}
+
 /* ---------- 績效 ---------- */
-function equitySVG(eq) {
+function equitySVG(eq, key = 'r', unit = 'R') {
   if (!eq.length) return '<p class="muted">還沒有已結算的交易。</p>';
-  const pts = [0].concat(eq.map(e => e.r));
+  const pts = [0].concat(eq.map(e => e[key]));
   const lo = Math.min(0, ...pts), hi = Math.max(0, ...pts), span = (hi - lo) || 1;
   const W = 640, H = 190, L = 52, R = 14, T = 12, B = 20;
   const X = i => L + (W - L - R) * i / Math.max(1, pts.length - 1), Y = v => T + (H - T - B) * (1 - (v - lo) / span);
   const d = pts.map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1)).join(' ');
   const last = pts[pts.length - 1];
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;max-width:100%" role="img" aria-label="累計 R 值曲線">
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;max-width:100%" role="img" aria-label="累計報酬曲線">
     <line x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--line)" stroke-dasharray="4 4"/>
     <text x="${L - 8}" y="${Y(0) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">0</text>
-    ${hi > 0 ? `<text x="${L - 8}" y="${Y(hi) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${nf(hi, 1)}R</text>` : ''}
-    ${lo < 0 ? `<text x="${L - 8}" y="${Y(lo) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${nf(lo, 1)}R</text>` : ''}
+    ${hi > 0 ? `<text x="${L - 8}" y="${Y(hi) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${nf(hi, 1)}${unit}</text>` : ''}
+    ${lo < 0 ? `<text x="${L - 8}" y="${Y(lo) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${nf(lo, 1)}${unit}</text>` : ''}
     <text x="${L}" y="${H - 4}" font-size="11" fill="var(--muted)">${esc(eq[0].d)}</text>
     <text x="${W - R}" y="${H - 4}" text-anchor="end" font-size="11" fill="var(--muted)">${esc(eq[eq.length - 1].d)}</text>
     <path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linejoin="round"/>
@@ -503,11 +579,11 @@ function renderParams() {
 
 /* ---------- 啟動 ---------- */
 (async function () {
-  [PICKS, STATS, INTRA] = await Promise.all([getJSON('data/picks.json'), getJSON('data/stats.json'), getJSON('data/intraday.json')]);
+  [PICKS, STATS, INTRA, TS] = await Promise.all([getJSON('data/picks.json'), getJSON('data/stats.json'), getJSON('data/intraday.json'), getJSON('data/ts.json')]);
   if (PICKS && PICKS.meta && PICKS.meta.synthetic) {
     $('banner').innerHTML = '<div class="banner">這是用電腦合成的示範資料,股票與數字都不是真實行情,只用來預覽版面。接上真實資料後這個提示會消失。</div>';
   }
-  route(); renderPicks(); renderIntraday(); renderPerf(); renderParams();
+  route(); renderPicks(); renderIntraday(); renderTs(); renderPerf(); renderParams();
 })();
 </script>
 </body>

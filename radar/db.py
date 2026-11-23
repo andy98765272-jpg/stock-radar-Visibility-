@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS prices(
   date TEXT, code TEXT, name TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, value REAL,
   PRIMARY KEY(date, code));
 CREATE TABLE IF NOT EXISTS inst(date TEXT, code TEXT, net REAL, PRIMARY KEY(date, code));
+CREATE TABLE IF NOT EXISTS trust(date TEXT, code TEXT, net REAL, PRIMARY KEY(date, code));
 CREATE TABLE IF NOT EXISTS disposal(code TEXT, start TEXT, end TEXT);
 CREATE TABLE IF NOT EXISTS no_data(date TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS signals(
@@ -38,6 +39,27 @@ def upsert_prices(conn, date, rows):
 def upsert_inst(conn, date, mapping):
     conn.executemany("INSERT OR REPLACE INTO inst VALUES(?,?,?)", [(date, c, v) for c, v in mapping.items()])
     conn.commit()
+
+
+def upsert_trust(conn, date, mapping):
+    conn.executemany("INSERT OR REPLACE INTO trust VALUES(?,?,?)", [(date, c, v) for c, v in mapping.items()])
+    conn.commit()
+
+
+def has_trust(conn, date):
+    return conn.execute("SELECT 1 FROM trust WHERE date=? LIMIT 1", (date,)).fetchone() is not None
+
+
+def load_trust(conn, since=None):
+    q = "SELECT date,code,net FROM trust"
+    args = ()
+    if since:
+        q += " WHERE date>=?"
+        args = (since,)
+    out = {}
+    for d, code, net in conn.execute(q, args):
+        out.setdefault(d, {})[code] = net
+    return out
 
 
 def replace_disposal(conn, rows):

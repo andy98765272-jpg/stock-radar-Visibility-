@@ -125,6 +125,102 @@ class Simulate(unittest.TestCase):
         self.assertEqual(r.get("status"), "open")  # 成交後資料還不足以出場
 
 
+class TrustStrategy(unittest.TestCase):
+    """投信隔日沖:條件、模擬與 T86 欄位解析。"""
+    def _bars(self, n=25, last=None):
+        base = [("2026-10-%02d" % (i + 1), 100, 101, 99, 100, 3_000_000, 3e8) for i in range(n - 1)]
+        base.append(last or ("2026-10-30", 100, 103, 100, 102, 4_000_000, 4e8))
+        return base
+
+    def _U(self, bars, code="2330"):
+        U = scr.Universe()
+        U.bars[code] = bars
+        U.dates[code] = [b[0] for b in bars]
+        U.names[code] = "測試"
+        U.mdates = [b[0] for b in bars]
+        return U
+
+    def test_pass_and_each_condition_blocks(self):
+        from radar import ts
+        U = self._U(self._bars())
+        asof = "2026-10-30"
+        ok = ts.screen_ts(U, {asof: {"2330": 500_000}}, [], asof, CFG)
+        self.assertEqual([p["code"] for p in ok["picks"]], ["2330"])
+        self.assertEqual(ok["picks"][0]["trust_lots"], 500)
+        self.assertEqual(ts.screen_ts(U, {asof: {"2330": -1}}, [], asof, CFG)["picks"], [])      # 投信賣超
+        self.assertFalse(ts.screen_ts(U, {}, [], asof, CFG)["ready"])                            # 還沒公布投信資料
+        low = self._bars(last=("2026-10-30", 100, 103, 100, 102, 2_000_000, 2e8))
+        self.assertEqual(ts.screen_ts(self._U(low), {asof: {"2330": 1}}, [], asof, CFG)["picks"], [])   # 量不足 2500 張
+        flat = self._bars(last=("2026-10-30", 100, 103, 100, 102, 3_300_000, 3e8))
+        self.assertEqual(ts.screen_ts(self._U(flat), {asof: {"2330": 1}}, [], asof, CFG)["picks"], [])  # 量未達 1.2 倍
+        nohigh = self._bars()
+        nohigh[5] = ("2026-10-06", 100, 110, 99, 100, 3_000_000, 3e8)
+        self.assertEqual(ts.screen_ts(self._U(nohigh), {asof: {"2330": 1}}, [], asof, CFG)["picks"], [])  # 沒創 20 日新高
+        lim = self._bars(last=("2026-10-30", 100, 110, 100, 109.9, 4_000_000, 4e8))
+        self.assertEqual(ts.screen_ts(self._U(lim), {asof: {"2330": 1}}, [], asof, CFG)["picks"], [])    # 漲幅 ≥ 9.5%
+        self.assertEqual(ts.screen_ts(U, {asof: {"2330": 1}}, [("2330", None, None)], asof, CFG)["picks"], [])  # 處置股
+
+    def test_rank_by_trust_share(self):
+        from radar import ts
+        a, b = self._bars(), self._bars()
+        U = self._U(a, "2330")
+        U.bars["2317"], U.dates["2317"], U.names["2317"] = b, [x[0] for x in b], "乙"
+        res = ts.screen_ts(U, {"2026-10-30": {"2330": 100_000, "2317": 900_000}}, [], "2026-10-30", CFG)
+        self.assertEqual([p["code"] for p in res["picks"]], ["2317", "2330"])
+        self.assertEqual([p["rank"] for p in res["picks"]], [1, 2])
+
+    def test_simulate_modes_and_costs(self):
+        from radar import ts
+        costs = Costs(CFG)
+        up = [("d1", 100, 102, 99.5, 101, 0), ("d2", 101, 102, 100, 101, 0)]
+        r = ts.simulate(100, up, CFG, costs, "same_close")           # 當日 +1.5% 達標
+        self.assertEqual(r["status"], "tp")
+        self.assertAlmostEqual(r["gross_pct"], 1.5, places=6)
+        self.assertLess(r["net_pct"], 1.0)                           # 扣掉手續費與證交稅後只剩約 0.9%
+        self.assertAlmostEqual(r["net_pct"], 1.5 - 0.1425 * 2 - 0.3 - 0.0, delta=0.05)
+        r = ts.simulate(100, up, CFG, costs, "next_open")            # 隔日開盤 100 進場,最高 102 達標
+        self.assertEqual((r["status"], r["fill"]), ("tp", 100))
+        both = [("d1", 100, 102, 94, 100, 0)]
+        self.assertEqual(ts.simulate(100, both, CFG, costs, "next_open")["status"], "stop")   # 同日兩邊都碰到,以停損計
+        gap = [("d1", 100, 100.5, 99.8, 100, 0), ("d2", 90, 91, 89, 90, 0)]
+        r = ts.simulate(100, gap, CFG, costs, "same_close")
+        self.assertEqual((r["status"], r["exit"]), ("stop", 90))     # 跳空越過停損,以開盤價出場
+        flat = [("d%d" % i, 100, 100.8, 99.5, 100.2, 0) for i in range(5)]
+        r = ts.simulate(100, flat, CFG, costs, "same_close")
+        self.assertEqual((r["status"], r["exit_date"]), ("time", "d4"))   # 第 5 日收盤出場
+        self.assertEqual(ts.simulate(100, flat[:3], CFG, costs, "same_close")["status"], "open")
+        self.assertEqual(ts.simulate(100, [], CFG, costs, "same_close")["status"], "pending")
+
+    def test_parse_trust(self):
+        from radar import twse
+        payload = {"stat": "OK", "date": "20261120", "fields": ["證券代號", "證券名稱", "投信買進股數", "投信買賣超股數", "三大法人買賣超股數"],
+                   "data": [["2330", "台積電", "1,000", "2,500", "-3,000"], ["2317", "鴻海", "0", "-1,000", "500"]]}
+        self.assertEqual(twse.parse_trust(payload, "20261120"), {"2330": 2500, "2317": -1000})
+        self.assertEqual(twse.parse_inst(payload, "20261120"), {"2330": -3000, "2317": 500})
+        self.assertEqual(twse.parse_trust(payload, "20261119"), {})
+
+    def test_backtest_runs_on_synth(self):
+        from radar import ts
+        tmp = tempfile.mkdtemp()
+        conn = db.connect(os.path.join(tmp, "t.db"))
+        days = synth.build(conn)
+        U = scr.Universe.load(conn)
+        import random
+        rng = random.Random(1)
+        for d in days:   # 合成資料沒有投信資料,隨機給一些買超
+            db.upsert_trust(conn, d.isoformat(), {c: rng.choice([-1, 1]) * rng.randint(1, 800) * 1000 for c in U.bars})
+        trust = db.load_trust(conn)
+        cfg = json.loads(json.dumps(CFG))
+        cfg["ts"]["min_lots"] = 100
+        res = ts.backtest(conn, U, trust, [], cfg, [d.isoformat() for d in days])
+        json.dumps(res)
+        for m in ts.MODES:
+            s = res["modes"][m]
+            if s["n"]:
+                self.assertLessEqual(s["avg_net_pct"], s["avg_gross_pct"])   # 成本只會讓報酬變差
+                self.assertEqual(sum(s["exits"].values()), s["n"])
+
+
 class Ssl(unittest.TestCase):
     def test_context_keeps_verification(self):
         import ssl

@@ -89,3 +89,10 @@ python -m http.server -d docs  # 另開視窗,瀏覽 http://localhost:8000 的�
 python -m unittest discover -s tests -t .
 python -m tests.make_demo preview   # 產生合成資料預覽(網站會顯示「示範資料」提示)
 ```
+
+## 投信隔日沖(`python -m radar ts`)
+
+依 XQ 回測設定重做:成交量 ≥ 2500 張、量 > 前一日 1.2 倍、漲幅 < 9.5%、最高價創 20 日新高、投信當日買超,
+依投信買超佔成交量比重排序取前 15 名;停利 +1.5%、停損 −5%、最多持有 5 日。
+回測同時算「當日收盤進場(照 XQ,實務做不到,因為投信資料收盤後才公布)」與「隔日開盤進場(做得到)」,並扣除手續費與證交稅。
+第一次執行 `daily` 會回補約 140 個交易日的投信資料(約 8 分鐘)。條件參數在 `config.json` 的 `ts` 區塊。

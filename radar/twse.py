@@ -122,6 +122,30 @@ def parse_inst(payload, date_str):
     return out
 
 
+def parse_trust(payload, date_str):
+    """回傳 {code: 投信買賣超股數}(T86 的「投信買賣超股數」欄)"""
+    pd = payload.get("date")
+    if pd and str(pd) != date_str:
+        return {}
+    if payload.get("stat") not in (None, "OK"):
+        return {}
+    t = find_table(payload, ["證券代號", "投信買賣超股數"])
+    if not t:
+        return {}
+    fields, data = t
+    i_code, i_net = col(fields, "證券代號"), col(fields, "投信買賣超股數")
+    out = {}
+    for row in data:
+        try:
+            code = str(row[i_code]).strip()
+            net = parse_num(row[i_net])
+        except (IndexError, TypeError):
+            continue
+        if net is not None:
+            out[code] = net
+    return out
+
+
 def parse_disposal(payload):
     """回傳 [(code, start_iso, end_iso)];欄位抓不到期間時,起迄皆為 None。"""
     t = find_table(payload, ["證券代號", "處置"])
@@ -165,3 +189,10 @@ def fetch_inst(d):
 def fetch_disposal():
     payload = http_json(f"{BASE}/announcement/punish?response=json")
     return parse_disposal(payload)
+
+
+def fetch_inst_trust(d):
+    """一次請求同時取得三大法人與投信買賣超,回傳 (inst, trust)。"""
+    ds = d.strftime("%Y%m%d")
+    payload = http_json(f"{BASE}/fund/T86?date={ds}&selectType=ALLBUT0999&response=json")
+    return parse_inst(payload, ds), parse_trust(payload, ds)
