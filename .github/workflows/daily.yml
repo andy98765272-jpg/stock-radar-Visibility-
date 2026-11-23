@@ -1,0 +1,47 @@
+name: daily
+
+on:
+  schedule:
+    # 台北時間週一到週五 17:30(UTC 09:30)。三大法人資料通常在 16:00 後才發布。
+    - cron: "30 9 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 資料庫放在快取裡,每次執行只補抓新的交易日。快取遺失時會自動重新補抓歷史資料。
+      - uses: actions/cache@v4
+        with:
+          path: data/radar.db
+          key: radar-db-${{ github.run_id }}
+          restore-keys: |
+            radar-db-
+
+      - name: 檢查資料來源
+        run: python -m radar doctor
+
+      - name: 更新資料、選股、統計績效
+        run: python -m radar daily
+
+      - name: 提交結果
+        run: |
+          git config user.name "stock-radar-bot"
+          git config user.email "stock-radar-bot@users.noreply.github.com"
+          git add docs/data
+          git diff --cached --quiet || git commit -m "daily update $(date -u +%F)"
+          git push

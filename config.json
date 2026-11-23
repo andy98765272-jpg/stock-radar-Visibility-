@@ -1,0 +1,24 @@
+{
+  "filters": {
+    "price_min": 15,
+    "price_max": 300,
+    "min_turnover20_wan": 5000,
+    "min_history": 40,
+    "ma_alignment": "full",
+    "gap_max_pct": 3.0,
+    "ext_ma5_max_pct": 7.0,
+    "ext_ma20_max_pct": 15.0,
+    "min_rr": 2.0
+  },
+  "strategies": {
+    "bk": {"rsi": [55, 70], "min_vol_ratio": 1.5, "near_high_pct": 2.0},
+    "pb": {"rsi": [50, 70], "near_ma_pct": 1.5},
+    "mo": {"min_close_pos": 0.8, "max_ext_ma5_pct": 5.0}
+  },
+  "score": {"min_score": 75, "max_picks": 20},
+  "plan": {"atr_stop_cushion": 0.3, "atr_t1": 2.5, "atr_t2": 4.0},
+  "risk": {"max_risk_per_trade": 1000},
+  "costs": {"fee_rate": 0.001425, "fee_discount": 1.0, "tax_rate": 0.003, "slippage": 0.0},
+  "perf": {"entry_valid_days": 3, "max_hold_days": 5},
+  "data": {"history_days": 140, "request_pause_sec": 3.5}
+}
