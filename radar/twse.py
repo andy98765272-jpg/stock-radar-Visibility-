@@ -9,7 +9,7 @@ import json
 import time
 import urllib.request
 
-from .util import parse_num, roc_dates
+from .util import parse_num, roc_dates, ssl_context
 
 BASE = "https://www.twse.com.tw/rwd/zh"
 UA = "Mozilla/5.0 (compatible; StockRadar/1.0)"
@@ -30,7 +30,7 @@ def http_json(url, retries=3):
         _last[0] = time.time()
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with urllib.request.urlopen(req, timeout=30, context=ssl_context()) as r:
                 return json.loads(r.read().decode("utf-8"))
         except Exception as e:  # 網路錯誤、被擋、非 JSON 都走這裡
             last = e

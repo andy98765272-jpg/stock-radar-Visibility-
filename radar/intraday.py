@@ -10,7 +10,7 @@ import http.cookiejar
 import json
 import urllib.request
 
-from .util import now_taipei, parse_num
+from .util import now_taipei, parse_num, ssl_context
 
 MIS_HOME = "https://mis.twse.com.tw/stock/index.jsp"
 MIS_API = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
@@ -55,7 +55,7 @@ def parse_quotes(payload):
 
 def fetch_quotes(codes):
     jar = http.cookiejar.CookieJar()
-    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), urllib.request.HTTPSHandler(context=ssl_context()))
     op.addheaders = [("User-Agent", UA)]
     op.open(MIS_HOME, timeout=20).read()  # 先取得 session cookie
     ex = "|".join(f"tse_{c}.tw" for c in codes)

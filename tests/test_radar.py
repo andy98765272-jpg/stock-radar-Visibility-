@@ -125,6 +125,17 @@ class Simulate(unittest.TestCase):
         self.assertEqual(r.get("status"), "open")  # 成交後資料還不足以出場
 
 
+class Ssl(unittest.TestCase):
+    def test_context_keeps_verification(self):
+        import ssl
+        from radar.util import ssl_context
+        c = ssl_context()
+        self.assertEqual(c.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(c.check_hostname)
+        strict = getattr(ssl, "VERIFY_X509_STRICT", 0)
+        self.assertEqual(c.verify_flags & strict, 0)
+
+
 class Intraday(unittest.TestCase):
     PICK = {"code": "3001", "name": "合成突破", "strategy": "bk", "strategy_name": "帶量突破型", "entry": 100.0,
             "stop": 97.0, "t1": 106.0, "order_type": "stop", "avg_vol5": 3_000_000}

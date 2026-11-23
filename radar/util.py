@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import ssl
 from datetime import datetime, timedelta, timezone
 
 TAIPEI = timezone(timedelta(hours=8))
@@ -92,3 +93,16 @@ class Costs:
     def net_pnl(self, entry: float, exit_: float) -> float:
         """每股淨損益。"""
         return (exit_ - entry) - 2 * self.slip - entry * self.fee - exit_ * self.fee - exit_ * self.tax
+
+
+def ssl_context():
+    """標準的憑證驗證(驗憑證鏈、驗網站名稱),只關掉 Python 3.13 起預設開啟的 X509 嚴格模式。
+
+    證交所即時報價網站的憑證缺少 Subject Key Identifier 欄位,嚴格模式會因此拒絕連線
+    (CERTIFICATE_VERIFY_FAILED: Missing Subject Key Identifier)。這裡不會停用任何驗證。
+    """
+    ctx = ssl.create_default_context()
+    strict = getattr(ssl, "VERIFY_X509_STRICT", 0)
+    if strict:
+        ctx.verify_flags &= ~strict
+    return ctx
