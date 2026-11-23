@@ -42,9 +42,12 @@ python -m radar doctor
 
 ```
 python -m radar daily          # 先產生候選名單
-python -m radar watch          # 開盤時間執行,每 60 秒更新,13:35 自動結束
+python -m radar watch          # 開盤時間執行,預設每 5 秒向證交所抓一次報價,13:35 自動結束
+python -m radar watch --interval 3   # 想更快可以調,不建議低於 3 秒(會被限流)
 python -m http.server -d docs  # 另開視窗,瀏覽 http://localhost:8000 的「盤中監控」分頁
 ```
+
+網頁每 1 秒檢查一次是否有新資料,資料實際更新速度取決於上面的抓取間隔。
 
 每檔會顯示現價、漲跌、盤中量比、與進場價及停損的關係,並判斷:
 

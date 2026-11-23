@@ -401,10 +401,23 @@ function renderIntraday() {
       <td class="r num">${x.vr == null ? '—' : nf(x.vr, 2)}</td><td class="r num">${nf(x.entry, 2)}</td><td class="r num down">${nf(x.stop, 2)}</td>
       <td><span class="pill ${pc}">${esc(x.status)}</span></td></tr>`;
   }).join('');
-  el.innerHTML = `<div class="panel"><div class="sec-t" style="margin-top:0">更新時間 ${esc(INTRA.updated_at)}</div>
+  el.innerHTML = `<div class="panel"><div class="sec-t" style="margin-top:0">更新時間 ${esc(INTRA.updated_at)} <span id="intra-age" class="muted"></span></div>
     <div class="scroll"><table><tr><th>標的</th><th>策略</th><th class="r">現價</th><th class="r">漲跌</th><th class="r">盤中量比</th><th class="r">進場價</th><th class="r">停損</th><th>狀態</th></tr>${rows}</table></div>
-    <p class="muted" style="margin-top:10px;font-size:.82rem">盤中量比 = 目前累計成交量 ÷(前 5 日平均成交量 × 此時段預期累計比例)。預期比例是依一般 U 型量能曲線估計,僅供參考。</p></div>`;
+    <p class="muted" style="margin-top:10px;font-size:.82rem">本頁每秒檢查一次有沒有新資料;資料多久更新,取決於監控程式向證交所抓報價的間隔(預設 5 秒)。盤中量比 = 目前累計成交量 ÷(前 5 日平均成交量 × 此時段預期累計比例)。預期比例是依一般 U 型量能曲線估計,僅供參考。</p></div>`;
 }
+
+function intraAge() {
+  const el = $('intra-age'); if (!el || !INTRA) return;
+  const s = Math.max(0, Math.round((Date.now() - new Date(INTRA.updated_at.replace(' ', 'T') + '+08:00').getTime()) / 1000));
+  el.textContent = s > 90 ? `(已 ${Math.floor(s / 60)} 分鐘沒有更新,監控程式可能已停止或已收盤)` : `(${s} 秒前)`;
+}
+async function pollIntraday() {
+  if (document.hidden || location.hash.replace('#', '') !== 'intraday') return;
+  const j = await getJSON('data/intraday.json?t=' + Date.now());
+  if (j && (!INTRA || j.updated_at !== INTRA.updated_at)) { INTRA = j; renderIntraday(); }
+  intraAge();
+}
+setInterval(pollIntraday, 1000);
 
 /* ---------- 績效 ---------- */
 function equitySVG(eq) {

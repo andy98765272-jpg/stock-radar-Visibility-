@@ -222,7 +222,9 @@ def cmd_watch(args):
         raise SystemExit("找不到 docs/data/picks.json,請先執行 `python -m radar daily` 產生候選名單。")
     with open(path, encoding="utf-8") as f:
         picks = json.load(f)["picks"]
-    print(f"監控 {len(picks)} 檔候選股,每 {args.interval} 秒更新一次(Ctrl+C 結束)")
+    print(f"監控 {len(picks)} 檔候選股,每 {args.interval} 秒向證交所抓一次報價(Ctrl+C 結束)")
+    if args.interval < 3:
+        print("  ! 間隔低於 3 秒:證交所報價本身更新不快,過於頻繁可能被限流或暫時封鎖 IP,建議用 5 秒以上。")
     while True:
         now = now_taipei()
         try:
@@ -261,7 +263,7 @@ def main(argv=None):
     p.add_argument("file")
     p.set_defaults(fn=cmd_import)
     p = sub.add_parser("watch", help="盤中監控候選名單(在本機執行)")
-    p.add_argument("--interval", type=int, default=60)
+    p.add_argument("--interval", type=int, default=5, help="向證交所抓報價的間隔秒數(預設 5)")
     p.add_argument("--once", action="store_true", help="只抓一次,用來測試")
     p.set_defaults(fn=cmd_watch)
     p = sub.add_parser("daily", help="更新 + 選股 + 績效統計(排程用)")
