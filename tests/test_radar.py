@@ -156,6 +156,16 @@ class Intraday(unittest.TestCase):
         self.assertEqual(q["3001"]["volume"], 1_200_000)
         self.assertEqual(q["3002"]["price"], 55.1)
 
+    def test_parse_real_response_sample(self):
+        # 2026-11-23 收盤後從 mis.twse.com.tw 取得的真實欄位(聚陽)
+        from radar import intraday as it
+        q = it.parse_quotes({"msgArray": [{"c": "1477", "n": "聚陽", "z": "221.5000", "pz": "222.5000", "o": "220.0000",
+            "h": "223.0000", "l": "216.5000", "y": "220.0000", "v": "1832", "t": "13:30:00", "tv": "187"}]})["1477"]
+        self.assertEqual(q["price"], 221.5)
+        self.assertEqual(q["prev_close"], 220.0)
+        self.assertEqual(q["volume"], 1_832_000)
+        self.assertEqual(q["time"], "13:30:00")
+
     def ev(self, price, vol, open_=99.0, minutes=60, pick=None):
         from radar import intraday as it
         q = {"price": price, "open": open_, "prev_close": 98.0, "volume": vol}

@@ -12,7 +12,7 @@ import urllib.request
 
 from .util import now_taipei, parse_num, ssl_context
 
-MIS_HOME = "https://mis.twse.com.tw/stock/index.jsp"
+MIS_HOME = "https://mis.twse.com.tw/stock/index"
 MIS_API = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 UA = "Mozilla/5.0 (compatible; StockRadar/1.0)"
 
@@ -57,7 +57,10 @@ def fetch_quotes(codes):
     jar = http.cookiejar.CookieJar()
     op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), urllib.request.HTTPSHandler(context=ssl_context()))
     op.addheaders = [("User-Agent", UA)]
-    op.open(MIS_HOME, timeout=20).read()  # 先取得 session cookie
+    try:
+        op.open(MIS_HOME, timeout=20).read()  # 先取得 session cookie;失敗不影響後面的報價請求
+    except Exception:
+        pass
     ex = "|".join(f"tse_{c}.tw" for c in codes)
     with op.open(f"{MIS_API}?ex_ch={ex}&json=1&delay=0", timeout=20) as r:
         return parse_quotes(json.loads(r.read().decode("utf-8")))
