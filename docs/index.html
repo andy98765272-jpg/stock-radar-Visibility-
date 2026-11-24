@@ -158,6 +158,7 @@ svg text{font-family:var(--font-num)}
   <div id="banner"></div>
 
   <section id="picks" class="stack" hidden>
+    <div id="mode"></div>
     <div class="funnel" id="funnel"></div>
     <div class="chips" id="filters" role="group" aria-label="策略篩選"></div>
     <div id="pick-list" class="stack"></div>
@@ -183,7 +184,7 @@ const sgn = (n, d = 0) => (n > 0 ? '+' : n < 0 ? '−' : '') + nf(Math.abs(n), d
 const cls = n => n > 0 ? 'up' : n < 0 ? 'down' : '';
 const GROUPS = {'技術面':30,'成交量與價量':25,'籌碼面':20,'動能與題材':15,'風險控管':10};
 const TABS = ['picks','intraday','ts','perf','params'];
-let PICKS = null, STATS = null, INTRA = null, TS = null, filter = 'all', srcKey = 'backtest';
+let PICKS = null, LIVE = null, listMode = null, STATS = null, INTRA = null, TS = null, filter = 'all', srcKey = 'backtest';
 
 async function getJSON(p) {
   try { const r = await fetch(p, {cache: 'no-cache'}); if (!r.ok) throw 0; return await r.json(); }
@@ -204,25 +205,38 @@ window.addEventListener('hashchange', route);
 function emptyState(msg) {
   return `<div class="panel empty">${msg}</div>`;
 }
+function liveUsable() {
+  return !!(LIVE && LIVE.meta && !LIVE.meta.error && PICKS && PICKS.meta && LIVE.meta.asof > PICKS.meta.asof);
+}
+function viewPicks() { return liveUsable() && listMode === 'live' ? LIVE : PICKS; }
+window.addEventListener('hashchange', () => { if (location.hash === '#picks') pollLivePicks(); });
+function renderMode() {
+  const el = $('mode');
+  if (!liveUsable()) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="chips"><button type="button" data-mode="live" aria-pressed="${listMode === 'live'}">盤中即時(預估)</button><button type="button" data-mode="close" aria-pressed="${listMode === 'close'}">昨日收盤名單(${esc(PICKS.meta.asof)})</button></div>`
+    + (listMode === 'live' ? `<div class="banner">盤中預估,更新於 ${esc(LIVE.meta.updated_at.slice(11, 16))}:今天的高低點、收盤位置與全日成交量都還會變,名單會隨盤中進出;沒有法人資料,評分門檻按比例調降。收盤後以正式名單為準,不要只看這份就進場。</div>` : '');
+}
 function renderPicks() {
-  if (!PICKS) {
+  renderMode();
+  const P = viewPicks();
+  if (!P) {
     $('funnel').innerHTML = ''; $('filters').innerHTML = '';
     $('watch-list').innerHTML = '';
     $('pick-list').innerHTML = emptyState('還沒有選股資料。<br>執行 <code>python -m radar daily</code>,或等排程第一次跑完後重新整理。');
     return;
   }
-  const m = PICKS.meta, c = m.counts;
-  $('asof').innerHTML = `資料日期<b>${esc(m.asof)}</b>`;
+  const m = P.meta, c = m.counts;
+  $('asof').innerHTML = P === LIVE ? `盤中預估<b>${esc(m.updated_at.slice(5, 16))}</b>` : `資料日期<b>${esc(m.asof)}</b>`;
   $('funnel').innerHTML = `<span>掃描 <b>${nf(c.scanned)}</b> 檔</span><span>通過基本條件 <b>${nf(c.eligible)}</b></span>
     <span>符合策略 <b>${nf(c.matched.bk + c.matched.pb + c.matched.mo)}</b></span><span>風險報酬不合格 <b>${nf(c.dropped_rr)}</b></span>
     <span>分數不足 <b>${nf(c.below_min_score)}</b></span><span>入選 <b>${nf(c.qualified)}</b></span>`;
   const names = {all: '全部', bk: '帶量突破', pb: '拉回支撐', mo: '強勢續攻'};
   $('filters').innerHTML = Object.keys(names).map(k =>
     `<button type="button" data-f="${k}" aria-pressed="${filter === k}">${names[k]}</button>`).join('');
-  const list = PICKS.picks.filter(p => filter === 'all' || p.strategy === filter);
+  const list = P.picks.filter(p => filter === 'all' || p.strategy === filter);
   $('pick-list').innerHTML = list.length ? list.map(pickCard).join('') :
     emptyState('今天沒有符合條件的股票。沒有訊號也是一種訊號,不需要硬找標的。');
-  const wl = (PICKS.watchlist || []).filter(p => filter === 'all' || p.strategy === filter);
+  const wl = (P.watchlist || []).filter(p => filter === 'all' || p.strategy === filter);
   $('watch-list').innerHTML = wl.length
     ? `<div class="sec-t" style="margin-top:14px">觀察名單(${wl.length} 檔)</div>
        <p class="muted" style="font-size:.85rem;margin-top:-4px">還沒達到正式訊號的標的:分數 60~74,或只差在均線沒有完整多頭排列。可以追蹤,但不算正式訊號,也不計入績效統計。</p>`
@@ -392,6 +406,10 @@ $('pick-list').addEventListener('keydown', e => {
   const cur = svg.dataset.idx == null ? +svg.dataset.n - 1 : +svg.dataset.idx;
   kSelect(svg, cur + (e.key === 'ArrowLeft' ? -1 : 1));
 });
+$('mode').addEventListener('click', e => {
+  const m = e.target.dataset && e.target.dataset.mode;
+  if (m) { listMode = m; renderPicks(); }
+});
 $('filters').addEventListener('click', e => {
   const f = e.target.dataset && e.target.dataset.f;
   if (f) { filter = f; renderPicks(); }
@@ -426,6 +444,7 @@ function intraAge() {
   el.textContent = s > 150 ? `(已 ${Math.floor(s / 60)} 分鐘沒有更新,監控程式可能已停止或已收盤)` : `(${s} 秒前)`;
 }
 // 盤中資料有兩個來源:GitHub 自動輪詢推到 live 分支(不用開電腦),或本機執行 watch 寫出的檔案。取比較新的那份。
+const LIVE_PICKS_URL = 'https://raw.githubusercontent.com/andy98765272-jpg/stock-radar-Visibility-/live/live_picks.json';
 const LIVE_URL = 'https://raw.githubusercontent.com/andy98765272-jpg/stock-radar-Visibility-/live/intraday.json';
 async function pollIntraday() {
   if (document.hidden || location.hash.replace('#', '') !== 'intraday') return;
@@ -436,6 +455,20 @@ async function pollIntraday() {
   intraAge();
 }
 setInterval(pollIntraday, 5000);
+async function pollLivePicks() {
+  if (document.hidden || location.hash.replace('#', '') !== 'picks') return;
+  const t = Date.now();
+  const [a, b] = await Promise.all([getJSON('data/live_picks.json?t=' + t), getJSON(LIVE_PICKS_URL + '?t=' + t)]);
+  const j = [a, b].filter(x => x && x.meta).sort((x, y) => String(y.meta.updated_at || '').localeCompare(String(x.meta.updated_at || '')))[0];
+  if (!j) return;
+  const first = !LIVE;
+  if (!LIVE || (j.meta.updated_at || '') !== (LIVE.meta.updated_at || '')) {
+    LIVE = j;
+    if (first && liveUsable() && !listMode) listMode = 'live';
+    renderPicks();
+  }
+}
+setInterval(pollLivePicks, 30000);
 
 
 /* ---------- 投信隔日沖 ---------- */
@@ -596,7 +629,7 @@ function renderParams() {
   if (PICKS && PICKS.meta && PICKS.meta.synthetic) {
     $('banner').innerHTML = '<div class="banner">這是用電腦合成的示範資料,股票與數字都不是真實行情,只用來預覽版面。接上真實資料後這個提示會消失。</div>';
   }
-  route(); renderPicks(); renderIntraday(); renderTs(); renderPerf(); renderParams();
+  route(); renderPicks(); renderIntraday(); renderTs(); renderPerf(); renderParams(); pollLivePicks();
 })();
 </script>
 </body>

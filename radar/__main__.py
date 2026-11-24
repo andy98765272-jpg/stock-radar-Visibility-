@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import date, timedelta
 
-from . import db, perf, screen as scr, ts as tsm, twse
+from . import db, livescreen, perf, screen as scr, ts as tsm, twse
 from .util import now_taipei, today_taipei
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -144,6 +144,24 @@ def cmd_ts(args):
         print(f"  {p['rank']:>2}. {p['code']} {p['name']:<8} 收 {p['close']} 量 {p['vol_lots']} 張 投信買 {p['trust_lots']} 張 ({p['trust_share_pct']}%)")
     for m, s in res["backtest"]["modes"].items():
         print(f"  [{m}] {s.get('n', 0)} 筆 毛勝率 {s.get('win_rate_gross')} 淨勝率 {s.get('win_rate_net')} 每筆淨 {s.get('avg_net_pct')}%")
+
+
+def cmd_livescreen(args):
+    cfg = load_cfg(args.config)
+    conn = db.connect(DB_PATH)
+    dates = db.price_dates(conn)
+    if not dates:
+        raise SystemExit("資料庫沒有行情資料,請先執行 update。")
+    U = scr.Universe.load(conn, dates[max(0, len(dates) - 140)])
+    res = livescreen.run(U, db.load_disposal(conn), cfg)
+    write_json("live_picks.json", res)
+    m = res["meta"]
+    if m.get("error"):
+        print(m["error"])
+        return 0
+    print(f"{m['updated_at']} 盤中預估:查詢 {m['queried']} 檔、有報價 {m['quoted']} 檔,入選 {len(res['picks'])} 檔、觀察 {len(res['watchlist'])} 檔")
+    for p in res["picks"]:
+        print(f"  {p['code']} {p['name']:<8} {p['strategy_name']} {p['score']}分 現價 {p['close']}")
 
 
 def cmd_daily(args):
@@ -294,6 +312,8 @@ def main(argv=None):
     p = sub.add_parser("backtest", help="重播過去 N 個交易日的選股並統計績效")
     p.add_argument("--days", type=int, default=60)
     p.set_defaults(fn=cmd_backtest)
+    p = sub.add_parser("livescreen", help="盤中即時選股(預估版)")
+    p.set_defaults(fn=cmd_livescreen)
     p = sub.add_parser("ts", help="投信隔日沖選股與回測")
     p.add_argument("--days", type=int, default=140)
     p.set_defaults(fn=cmd_ts)

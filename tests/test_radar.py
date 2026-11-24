@@ -235,6 +235,71 @@ class TrustStrategy(unittest.TestCase):
                 self.assertEqual(sum(s["exits"].values()), s["n"])
 
 
+class LiveScreen(unittest.TestCase):
+    """盤中即時選股:收盤時(推估比例 100%)的結果應該和盤後正式選股一致。"""
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.conn = db.connect(os.path.join(cls.tmp, "t.db"))
+        cls.days = synth.build(cls.conn)
+        cls.last = cls.days[-1].isoformat()
+
+    def _hist_universe(self):
+        U = scr.Universe.load(self.conn)
+        full = {c: list(b) for c, b in U.bars.items()}
+        for c in list(U.bars):
+            U.bars[c] = [b for b in full[c] if b[0] < self.last]
+            U.dates[c] = [b[0] for b in U.bars[c]]
+        U.mdates = [d for d in U.mdates if d < self.last]
+        return U, full
+
+    def _fake_fetch(self, full, scale=1.0):
+        def fetch(codes):
+            out = {}
+            for c in codes:
+                b = full[c][-1]
+                out[c] = {"price": b[4], "open": b[1], "high": b[2], "low": b[3], "prev_close": full[c][-2][4],
+                          "volume": b[5] * scale, "time": "13:30:00"}
+            return out
+        return fetch
+
+    def test_matches_after_close_screen_at_full_day(self):
+        from datetime import datetime
+        from radar import livescreen
+        U, full = self._hist_universe()
+        now = datetime.fromisoformat(self.last + "T13:30:00")
+        live = livescreen.run(U, [], CFG, fetch=self._fake_fetch(full), now=now)
+        ref = run_screen(self.conn, CFG)
+        self.assertTrue(live["meta"]["live"])
+        codes = {p["code"] for p in live["picks"]} | {p["code"] for p in live["watchlist"]}
+        self.assertIn("3001", codes)                                   # 刻意造出的突破型標的,盤中預估也要抓得到
+        self.assertIn("3001", {p["code"] for p in ref["picks"]})
+        for p in live["picks"]:
+            self.assertGreaterEqual(p["score"], round(CFG["score"]["min_score"] * 0.8))
+            self.assertIsNone(p["chips"])
+        self.assertTrue(any("按比例調降" in n for n in live["meta"]["notes"]))
+        self.assertGreater(live["meta"]["quoted"], 0)
+        json.dumps(live)
+
+    def test_guards(self):
+        from datetime import datetime
+        from radar import livescreen
+        U, full = self._hist_universe()
+        early = livescreen.run(U, [], CFG, fetch=self._fake_fetch(full), now=datetime.fromisoformat(self.last + "T09:10:00"))
+        self.assertIn("error", early["meta"])           # 開盤太早,量推估不準
+        Uf = scr.Universe.load(self.conn)
+        done = livescreen.run(Uf, [], CFG, fetch=self._fake_fetch(full), now=datetime.fromisoformat(self.last + "T11:00:00"))
+        self.assertIn("error", done["meta"])            # 資料庫已有今天的收盤資料
+
+    def test_projection_uses_time_fraction(self):
+        from datetime import datetime
+        from radar import intraday, livescreen
+        U, full = self._hist_universe()
+        q = self._fake_fetch(full, scale=intraday.expected_fraction(90))(["3001"])
+        V, used = livescreen.with_today(U, q, self.last, 90)
+        self.assertAlmostEqual(V.bars["3001"][-1][5], full["3001"][-1][5], delta=full["3001"][-1][5] * 0.001)
+
+
 class Ssl(unittest.TestCase):
     def test_context_keeps_verification(self):
         import ssl

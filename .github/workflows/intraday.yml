@@ -1,7 +1,7 @@
 name: intraday
 
 # 台北時間週一到週五 08:50 啟動,一直跑到 13:35。
-# 每隔約 20 秒向證交所抓一次候選股報價,把結果推到獨立的 live 分支(不會觸發網站重新部署)。
+# 每隔約 20 秒抓一次候選股報價、每約 5 分鐘用即時價量重新篩選全市場,把結果推到獨立的 live 分支(不會觸發網站重新部署)。
 on:
   schedule:
     - cron: "50 0 * * 1-5"
@@ -28,22 +28,37 @@ jobs:
         with:
           python-version: "3.12"
 
+      # 取回每天盤後更新時存下的歷史資料庫,盤中即時選股需要它當歷史日線
+      - uses: actions/cache/restore@v4
+        with:
+          path: data/radar.db
+          key: radar-db-none
+          restore-keys: |
+            radar-db-
+
       - name: 盤中輪詢
         run: |
           push_live() {
             rm -rf /tmp/live && mkdir /tmp/live
             cp docs/data/intraday.json /tmp/live/intraday.json
+            [ -f docs/data/live_picks.json ] && cp docs/data/live_picks.json /tmp/live/live_picks.json
             (cd /tmp/live && git init -q -b live \
               && git config user.name "stock-radar-bot" && git config user.email "stock-radar-bot@users.noreply.github.com" \
-              && git add intraday.json && git commit -q -m "intraday $(date -u +%T)" \
+              && git add -A && git commit -q -m "intraday $(date -u +%T)" \
               && git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" live) \
               || echo "推送失敗,下一輪再試"
           }
           # 手動測試時(不在盤中時間)也至少抓一次,方便確認證交所從 GitHub 主機連不連得到
           python -m radar watch --once || echo "::warning::第一次抓報價失敗,請看上方錯誤訊息"
           [ -f docs/data/intraday.json ] && push_live
+          n=0
           while [ "$(TZ=Asia/Taipei date +%H%M)" -lt 1335 ] && [ "$(TZ=Asia/Taipei date +%H%M)" -ge 0850 ]; do
             python -m radar watch --once || true
+            # 每 10 輪(約 5 分鐘)用即時價量重新篩選一次全市場
+            if [ $((n % 10)) -eq 0 ] && [ -f data/radar.db ]; then
+              python -m radar livescreen || echo "盤中即時選股失敗,下一輪再試"
+            fi
+            n=$((n+1))
             [ -f docs/data/intraday.json ] && push_live
             sleep "$INTERVAL"
           done

@@ -53,7 +53,7 @@ def parse_quotes(payload):
     return out
 
 
-def fetch_quotes(codes):
+def _opener():
     jar = http.cookiejar.CookieJar()
     op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), urllib.request.HTTPSHandler(context=ssl_context()))
     op.addheaders = [("User-Agent", UA)]
@@ -61,9 +61,31 @@ def fetch_quotes(codes):
         op.open(MIS_HOME, timeout=20).read()  # 先取得 session cookie;失敗不影響後面的報價請求
     except Exception:
         pass
+    return op
+
+
+def _query(op, codes):
     ex = "|".join(f"tse_{c}.tw" for c in codes)
     with op.open(f"{MIS_API}?ex_ch={ex}&json=1&delay=0", timeout=20) as r:
         return parse_quotes(json.loads(r.read().decode("utf-8")))
+
+
+def fetch_quotes(codes):
+    return _query(_opener(), codes)
+
+
+def fetch_many(codes, size=80, pause=0.6):
+    """全市場掃描用:分批查詢,共用同一個 session。"""
+    import time
+    op = _opener()
+    out = {}
+    for i in range(0, len(codes), size):
+        try:
+            out.update(_query(op, codes[i:i + size]))
+        except Exception:
+            pass  # 單批失敗就略過,避免整次掃描作廢
+        time.sleep(pause)
+    return out
 
 
 def evaluate(pick, q, minutes, cfg):
