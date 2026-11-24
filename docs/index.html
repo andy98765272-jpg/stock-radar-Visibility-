@@ -426,7 +426,7 @@ function intraAge() {
   el.textContent = s > 150 ? `(已 ${Math.floor(s / 60)} 分鐘沒有更新,監控程式可能已停止或已收盤)` : `(${s} 秒前)`;
 }
 // 盤中資料有兩個來源:GitHub 自動輪詢推到 live 分支(不用開電腦),或本機執行 watch 寫出的檔案。取比較新的那份。
-const LIVE_URL = 'https://raw.githubusercontent.com/andy98765272-jpg/stock-radar-visibility-/live/intraday.json';
+const LIVE_URL = 'https://raw.githubusercontent.com/andy98765272-jpg/stock-radar-Visibility-/live/intraday.json';
 async function pollIntraday() {
   if (document.hidden || location.hash.replace('#', '') !== 'intraday') return;
   const t = Date.now();
