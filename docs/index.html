@@ -85,6 +85,8 @@ dl.six dd{margin:1px 0 0;font-size:.9rem}
 .bar .track{height:7px;background:var(--surface2);border-radius:4px;overflow:hidden}
 .bar .fill{height:100%;background:var(--accent)}
 .bar .v{text-align:right;font-family:var(--font-num)}
+.refresh{margin-top:8px;padding:5px 12px;font-size:.85rem}
+.refresh[disabled]{opacity:.6;cursor:default}
 .rules{font-size:.8rem;color:var(--muted);margin-top:8px}
 .rules summary{cursor:pointer}
 .rule{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px solid var(--line)}
@@ -144,7 +146,7 @@ svg text{font-family:var(--font-num)}
       <h1>STOCK RADAR</h1>
       <p class="sub">台股短線自動選股。每個交易日盤後更新。</p>
     </div>
-    <div class="asof" id="asof"></div>
+    <div class="asof"><div id="asof"></div><button type="button" id="refresh" class="refresh">↻ 更新資料</button><div id="refresh-msg" class="muted" style="font-size:.75rem;margin-top:4px" aria-live="polite"></div></div>
   </header>
 
   <nav class="tabs" aria-label="主選單">
@@ -624,6 +626,29 @@ function renderParams() {
 }
 
 /* ---------- 啟動 ---------- */
+async function refreshAll() {
+  const b = $('refresh'), msg = $('refresh-msg');
+  b.disabled = true; b.textContent = '更新中…';
+  const t = Date.now();
+  const [p, st, ts, lv, lvLive, intra, intraLive] = await Promise.all([
+    getJSON('data/picks.json?t=' + t), getJSON('data/stats.json?t=' + t), getJSON('data/ts.json?t=' + t),
+    getJSON('data/live_picks.json?t=' + t), getJSON(LIVE_PICKS_URL + '?t=' + t),
+    getJSON('data/intraday.json?t=' + t), getJSON(LIVE_URL + '?t=' + t)]);
+  const newest = (...xs) => xs.filter(Boolean).sort((x, y) => String(y.updated_at || (y.meta && y.meta.updated_at) || '').localeCompare(String(x.updated_at || (x.meta && x.meta.updated_at) || '')))[0] || null;
+  const changed = [];
+  if (p && (!PICKS || p.meta.generated_at !== PICKS.meta.generated_at)) { PICKS = p; changed.push('名單'); }
+  if (st) STATS = st;
+  if (ts && (!TS || ts.generated_at !== TS.generated_at)) { TS = ts; changed.push('投信隔日沖'); }
+  const l = newest(lv && lv.meta ? lv : null, lvLive && lvLive.meta ? lvLive : null);
+  if (l && (!LIVE || l.meta.updated_at !== LIVE.meta.updated_at)) { const first = !LIVE; LIVE = l; if (first && liveUsable() && !listMode) listMode = 'live'; changed.push('盤中名單'); }
+  const i = newest(intra, intraLive);
+  if (i && (!INTRA || i.updated_at !== INTRA.updated_at)) { INTRA = i; changed.push('盤中監控'); }
+  renderPicks(); renderIntraday(); renderTs(); renderPerf(); renderParams(); intraAge();
+  const hh = new Date().toLocaleTimeString('zh-TW', {hour12: false});
+  msg.textContent = hh + (changed.length ? ' 已更新:' + changed.join('、') : ' 已是最新');
+  b.disabled = false; b.textContent = '↻ 更新資料';
+}
+$('refresh').addEventListener('click', refreshAll);
 (async function () {
   [PICKS, STATS, INTRA, TS] = await Promise.all([getJSON('data/picks.json'), getJSON('data/stats.json'), getJSON('data/intraday.json'), getJSON('data/ts.json')]);
   if (PICKS && PICKS.meta && PICKS.meta.synthetic) {
